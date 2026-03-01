@@ -89,3 +89,9 @@ export interface Time {
 export interface Units {
 	humanReadableBytes: (bytes: number, binary?: boolean, forceDecimal?: boolean) => string;
 }
+
+export interface UUID {
+	encodeIdToUuidV8: (idDec: string, secret: string) => string;
+	decodeUuidV8ToId: (uuid: string, secret: string) => string;
+	parseDecimalId: (idDec: string) => bigint;
+}

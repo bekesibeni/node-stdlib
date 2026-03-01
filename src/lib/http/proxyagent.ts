@@ -16,7 +16,7 @@ export default function getProxyAgent(secure: boolean, proxyUrl: string, proxyTi
 
 	let agent = new (secure ? HttpsAgent : HttpAgent)({keepAlive: false});
 	// @ts-ignore
-	agent.createConnection = function(options, callback) {
+	agent.createConnection = function(options: any, callback: any) {
 		let url = new URL(proxyUrl);
 		let prox:HttpRequestOptions = {
 			protocol: url.protocol,

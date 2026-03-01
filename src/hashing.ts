@@ -7,7 +7,7 @@ import crc32 from './lib/hashing/crc32';
  * @param {Buffer|string} input
  * @param {string} [outputForm=hex]
  */
-function md5(input: string|Buffer, outputForm = 'hex') {
+function md5(input: string|Buffer, outputForm: BufferEncoding|'buffer' = 'hex') {
 	return basicHash('md5', input, outputForm);
 }
 
@@ -15,7 +15,7 @@ function md5(input: string|Buffer, outputForm = 'hex') {
  * @param {Buffer|string} input
  * @param {string} [outputForm=hex]
  */
-function sha1(input: string|Buffer, outputForm = 'hex') {
+function sha1(input: string|Buffer, outputForm: BufferEncoding|'buffer' = 'hex') {
 	return basicHash('sha1', input, outputForm);
 }
 
@@ -23,7 +23,7 @@ function sha1(input: string|Buffer, outputForm = 'hex') {
  * @param {Buffer|string} input
  * @param {string} [outputForm=hex]
  */
-function sha256(input: string|Buffer, outputForm = 'hex') {
+function sha256(input: string|Buffer, outputForm: BufferEncoding|'buffer' = 'hex') {
 	return basicHash('sha256', input, outputForm);
 }
 

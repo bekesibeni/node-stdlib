@@ -11,6 +11,7 @@ import Promises from './promises';
 import Rendering from './rendering';
 import Time from './time';
 import Units from './units';
+import UUID from './uuid';
 
 export {
 	Arrays,
@@ -25,7 +26,8 @@ export {
 	Promises,
 	Rendering,
 	Time,
-	Units
+	Units,
+	UUID
 };
 
 export default {
@@ -41,5 +43,6 @@ export default {
 	Promises,
 	Rendering,
 	Time,
-	Units
+	Units,
+	UUID
 };

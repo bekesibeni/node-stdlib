@@ -114,5 +114,5 @@ export default function calc(buf: Buffer|string, outputForm = 'number'): string|
 		return resultBuf;
 	}
 
-	return resultBuf.toString(outputForm);
+	return resultBuf.toString(outputForm as BufferEncoding);
 }

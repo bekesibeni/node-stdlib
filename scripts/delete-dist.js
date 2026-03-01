@@ -1,15 +1,9 @@
 const FS = require('fs');
 const Path = require('path');
 
-const MODULE_ROOT = Path.join(__dirname, '..');
+const DIST_DIR = Path.join(__dirname, '..', 'dist');
 
-FS.readdirSync(MODULE_ROOT).forEach((filename) => {
-	if (!filename.startsWith('.') && endsWith(filename, ['.js', '.ts', '.map'])) {
-		FS.unlinkSync(Path.join(MODULE_ROOT, filename));
-	}
-});
-
-deleteDirectory(Path.join(MODULE_ROOT, 'lib'));
+deleteDirectory(DIST_DIR);
 
 function deleteDirectory(dirName) {
 	if (!FS.existsSync(dirName)) {
@@ -28,8 +22,4 @@ function deleteDirectory(dirName) {
 	});
 
 	FS.rmdirSync(dirName);
-}
-
-function endsWith(haystack, needles) {
-	return (needles || []).some(needle => haystack.endsWith(needle));
 }
