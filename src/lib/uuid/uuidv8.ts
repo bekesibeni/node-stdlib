@@ -1,11 +1,9 @@
 import crypto from 'crypto';
 
-const ID_DEC_MAX = 10n ** 26n - 1n;
 const ID_BITS = 88n;
 const TAG_BITS = 34n;
-
-const MAX_ID_BITS = (1n << ID_BITS) - 1n;
 const TAG_MASK = (1n << TAG_BITS) - 1n;
+const MAX_INPUT_BYTES = 10; // 1 byte length prefix + 10 bytes data = 11 bytes = 88 bits
 
 const HALF_BITS = 44n;
 const HALF_MASK = (1n << HALF_BITS) - 1n;
@@ -30,13 +28,33 @@ function deriveKeys(secret: string) {
 	return {encKey, macKey};
 }
 
-export function parseDecimalId(idDec: string): bigint {
-	if (typeof idDec !== 'string') throw new Error('ID must be a string');
-	if (!/^\d{1,26}$/.test(idDec)) throw new Error('ID must be a decimal string with at most 26 digits');
-	const n = BigInt(idDec);
-	if (n < 0n || n > ID_DEC_MAX) throw new Error('ID exceeds 26-digit max (10^26 - 1)');
-	if (n > MAX_ID_BITS) throw new Error('ID too large for 88-bit encoding');
+function stringToBigInt88(input: string): bigint {
+	if (typeof input !== 'string') throw new Error('Input must be a string');
+	const buf = Buffer.from(input, 'utf8');
+	if (buf.length === 0) throw new Error('Input must not be empty');
+	if (buf.length > MAX_INPUT_BYTES) {
+		throw new Error(`Input exceeds ${MAX_INPUT_BYTES}-byte limit (got ${buf.length} bytes)`);
+	}
+	const payload = Buffer.alloc(11);
+	payload[0] = buf.length;
+	buf.copy(payload, 1);
+	let n = 0n;
+	for (let i = 0; i < 11; i++) {
+		n = (n << 8n) | BigInt(payload[i]);
+	}
 	return n;
+}
+
+function bigInt88ToString(n: bigint): string {
+	const buf = Buffer.alloc(11);
+	let v = n;
+	for (let i = 10; i >= 0; i--) {
+		buf[i] = Number(v & 0xffn);
+		v >>= 8n;
+	}
+	const len = buf[0];
+	if (len > MAX_INPUT_BYTES) throw new Error('Invalid decoded data');
+	return buf.subarray(1, 1 + len).toString('utf8');
 }
 
 function feistelF(encKey: Buffer, round: number, r44: bigint): bigint {
@@ -173,9 +191,9 @@ function uuidStringToBytes(uuid: string): Uint8Array {
 	return new Uint8Array(Buffer.from(hex, 'hex'));
 }
 
-export function encodeIdToUuidV8(idDec: string, secret: string): string {
+export function encodeToUuidV8(input: string, secret: string): string {
 	const {encKey, macKey} = deriveKeys(secret);
-	const id = parseDecimalId(idDec);
+	const id = stringToBigInt88(input);
 
 	const cipher88 = feistelEncrypt88(id, encKey);
 	const tag34 = mac34(cipher88, macKey);
@@ -185,7 +203,7 @@ export function encodeIdToUuidV8(idDec: string, secret: string): string {
 	return bytesToUuidString(packUuidV8(payload122));
 }
 
-export function decodeUuidV8ToId(uuid: string, secret: string): string {
+export function decodeFromUuidV8(uuid: string, secret: string): string {
 	const {encKey, macKey} = deriveKeys(secret);
 
 	const payload122 = unpackUuidV8(uuidStringToBytes(uuid));
@@ -196,6 +214,5 @@ export function decodeUuidV8ToId(uuid: string, secret: string): string {
 	if (tag34 !== expected) throw new Error('Invalid token');
 
 	const id = feistelDecrypt88(cipher88, encKey);
-	if (id > ID_DEC_MAX) throw new Error('Decoded ID out of 26-digit range');
-	return id.toString(10);
+	return bigInt88ToString(id);
 }

@@ -13,6 +13,10 @@
 	"files": [
 		"dist/"
 	],
+	"exports": {
+		".": "./dist/_main.js",
+		"./*": "./dist/*"
+	},
 	"dependencies": {
 		"psl": "^1.15.0"
 	},

@@ -91,7 +91,6 @@ export interface Units {
 }
 
 export interface UUID {
-	encodeIdToUuidV8: (idDec: string, secret: string) => string;
-	decodeUuidV8ToId: (uuid: string, secret: string) => string;
-	parseDecimalId: (idDec: string) => bigint;
+	encodeToUuidV8: (input: string, secret: string) => string;
+	decodeFromUuidV8: (uuid: string, secret: string) => string;
 }
