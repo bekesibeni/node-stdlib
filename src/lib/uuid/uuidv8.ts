@@ -29,8 +29,8 @@ function getKeys(secret: string): {encKey: Buffer, macKey: Buffer} {
 		throw new Error('UUID_SECRET too short. Use a strong random base64url string (32+ chars).');
 	}
 	const ikm = crypto.createHash('sha256').update(secret, 'utf8').digest();
-	const encKey = hkdfSha256(ikm, 'uuidv8-u88:enc:v1', 32);
-	const macKey = hkdfSha256(ikm, 'uuidv8-u88:mac:v1', 32);
+	const encKey = hkdfSha256(ikm, 'uuidv8-u88:enc:v2', 32);
+	const macKey = hkdfSha256(ikm, 'uuidv8-u88:mac:v2', 32);
 	_cachedSecret = secret;
 	_cachedKeys = {encKey, macKey};
 	return _cachedKeys;
@@ -77,25 +77,33 @@ function bigInt88ToOutput(n: bigint): string {
 	return buf.toString('utf8');
 }
 
-// ---- Feistel cipher ----
-// Reusable buffer for feistelF to avoid allocation per round
-const _fMsg = Buffer.alloc(7);
+// ---- Feistel cipher (AES-256-ECB, hardware-accelerated) ----
+const _aesBlock = Buffer.alloc(16);
 
 function feistelF(encKey: Buffer, round: number, r44: bigint): bigint {
-	_fMsg[0] = round;
-	let v = r44 & HALF_MASK;
-	for (let i = 5; i >= 0; i--) {
-		_fMsg[1 + i] = Number(v & 0xffn);
-		v >>= 8n;
-	}
-	const h = crypto.createHmac('sha256', encKey).update(_fMsg).digest();
+	_aesBlock[0] = round;
+	let v = r44;
+	_aesBlock[6] = Number(v & 0xffn); v >>= 8n;
+	_aesBlock[5] = Number(v & 0xffn); v >>= 8n;
+	_aesBlock[4] = Number(v & 0xffn); v >>= 8n;
+	_aesBlock[3] = Number(v & 0xffn); v >>= 8n;
+	_aesBlock[2] = Number(v & 0xffn); v >>= 8n;
+	_aesBlock[1] = Number(v & 0xffn);
+	_aesBlock[7] = 0; _aesBlock[8] = 0; _aesBlock[9] = 0; _aesBlock[10] = 0;
+	_aesBlock[11] = 0; _aesBlock[12] = 0; _aesBlock[13] = 0; _aesBlock[14] = 0;
+	_aesBlock[15] = 0;
+
+	const c = crypto.createCipheriv('aes-256-ecb', encKey, null);
+	c.setAutoPadding(false);
+	const out = c.update(_aesBlock);
+
 	return (
-		(BigInt(h[0]) << 36n) |
-		(BigInt(h[1]) << 28n) |
-		(BigInt(h[2]) << 20n) |
-		(BigInt(h[3]) << 12n) |
-		(BigInt(h[4]) << 4n) |
-		(BigInt(h[5]) >> 4n)
+		(BigInt(out[0]) << 36n) |
+		(BigInt(out[1]) << 28n) |
+		(BigInt(out[2]) << 20n) |
+		(BigInt(out[3]) << 12n) |
+		(BigInt(out[4]) << 4n) |
+		(BigInt(out[5]) >> 4n)
 	) & HALF_MASK;
 }
 
@@ -123,42 +131,47 @@ function feistelDecrypt88(x: bigint, encKey: Buffer): bigint {
 	return ((L << HALF_BITS) | R) & ID_MASK;
 }
 
-// ---- MAC ----
-const _macMsg = Buffer.alloc(11);
+// ---- MAC (AES-256-ECB) ----
+const _macBlock = Buffer.alloc(16);
 
 function mac34(cipher88: bigint, macKey: Buffer): bigint {
 	let v = cipher88 & ID_MASK;
-	for (let i = 10; i >= 0; i--) {
-		_macMsg[i] = Number(v & 0xffn);
-		v >>= 8n;
-	}
-	const h = crypto.createHmac('sha256', macKey).update(_macMsg).digest();
+	_macBlock[10] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[9] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[8] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[7] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[6] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[5] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[4] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[3] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[2] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[1] = Number(v & 0xffn); v >>= 8n;
+	_macBlock[0] = Number(v & 0xffn);
+	_macBlock[11] = 0; _macBlock[12] = 0; _macBlock[13] = 0;
+	_macBlock[14] = 0; _macBlock[15] = 0;
+
+	const c = crypto.createCipheriv('aes-256-ecb', macKey, null);
+	c.setAutoPadding(false);
+	const out = c.update(_macBlock);
+
 	return (
-		(BigInt(h[0]) << 26n) |
-		(BigInt(h[1]) << 18n) |
-		(BigInt(h[2]) << 10n) |
-		(BigInt(h[3]) << 2n) |
-		(BigInt(h[4]) >> 6n)
+		(BigInt(out[0]) << 26n) |
+		(BigInt(out[1]) << 18n) |
+		(BigInt(out[2]) << 10n) |
+		(BigInt(out[3]) << 2n) |
+		(BigInt(out[4]) >> 6n)
 	) & TAG_MASK;
 }
 
-// ---- UUIDv8 pack/unpack (byte-level, no bit-by-bit loops) ----
-//
-// UUID layout (128 bits):
-//   bytes 0-5  (bits 0-47):   custom_a  = payload[121:74]  (48 bits)
-//   byte  6    (bits 48-55):  version(4) + custom_b high 4  = 0x8_ | payload[73:70]
-//   byte  7    (bits 56-63):  custom_b low 8               = payload[69:62]
-//   byte  8    (bits 64-71):  variant(2) + custom_c high 6  = 0b10__ | payload[61:56]
-//   bytes 9-15 (bits 72-127): custom_c low 56              = payload[55:0]
+// ---- UUIDv8 pack/unpack ----
 
 function packUuidV8(p: bigint): Uint8Array {
 	const out = new Uint8Array(16);
 
-	const customC = p & 0x3FFFFFFFFFFFFFFFn;          // bits 0-61 (62 bits)
-	const customB = (p >> 62n) & 0xFFFn;               // bits 62-73 (12 bits)
-	const customA = (p >> 74n) & 0xFFFFFFFFFFFFn;      // bits 74-121 (48 bits)
+	const customC = p & 0x3FFFFFFFFFFFFFFFn;
+	const customB = (p >> 62n) & 0xFFFn;
+	const customA = (p >> 74n) & 0xFFFFFFFFFFFFn;
 
-	// bytes 0-5: customA (48 bits)
 	let v = customA;
 	out[5] = Number(v & 0xffn); v >>= 8n;
 	out[4] = Number(v & 0xffn); v >>= 8n;
@@ -167,15 +180,10 @@ function packUuidV8(p: bigint): Uint8Array {
 	out[1] = Number(v & 0xffn); v >>= 8n;
 	out[0] = Number(v & 0xffn);
 
-	// byte 6: version 8 (high nibble) + customB high 4 bits (low nibble)
 	out[6] = 0x80 | Number((customB >> 8n) & 0xfn);
-	// byte 7: customB low 8 bits
 	out[7] = Number(customB & 0xffn);
-
-	// byte 8: variant 10 (high 2 bits) + customC high 6 bits
 	out[8] = 0x80 | Number((customC >> 56n) & 0x3fn);
 
-	// bytes 9-15: customC low 56 bits
 	v = customC;
 	out[15] = Number(v & 0xffn); v >>= 8n;
 	out[14] = Number(v & 0xffn); v >>= 8n;
