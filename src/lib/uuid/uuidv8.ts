@@ -29,8 +29,8 @@ function getKeys(secret: string): {encKey: Buffer, macKey: Buffer} {
 		throw new Error('UUID_SECRET too short. Use a strong random base64url string (32+ chars).');
 	}
 	const ikm = crypto.createHash('sha256').update(secret, 'utf8').digest();
-	const encKey = hkdfSha256(ikm, 'uuidv8-u88:enc:v2', 32);
-	const macKey = hkdfSha256(ikm, 'uuidv8-u88:mac:v2', 32);
+	const encKey = hkdfSha256(ikm, 'uuidv8-u88:enc:v3', 32);
+	const macKey = hkdfSha256(ikm, 'uuidv8-u88:mac:v3', 32);
 	_cachedSecret = secret;
 	_cachedKeys = {encKey, macKey};
 	return _cachedKeys;
@@ -77,25 +77,21 @@ function bigInt88ToOutput(n: bigint): string {
 	return buf.toString('utf8');
 }
 
-// ---- Feistel cipher (AES-256-ECB, hardware-accelerated) ----
-const _aesBlock = Buffer.alloc(16);
+// ---- Feistel cipher (SHA-256 round function) ----
+const _feistelBuf = Buffer.alloc(39); // encKey(32) + round(1) + R(6)
 
 function feistelF(encKey: Buffer, round: number, r44: bigint): bigint {
-	_aesBlock[0] = round;
+	encKey.copy(_feistelBuf, 0);
+	_feistelBuf[32] = round;
 	let v = r44;
-	_aesBlock[6] = Number(v & 0xffn); v >>= 8n;
-	_aesBlock[5] = Number(v & 0xffn); v >>= 8n;
-	_aesBlock[4] = Number(v & 0xffn); v >>= 8n;
-	_aesBlock[3] = Number(v & 0xffn); v >>= 8n;
-	_aesBlock[2] = Number(v & 0xffn); v >>= 8n;
-	_aesBlock[1] = Number(v & 0xffn);
-	_aesBlock[7] = 0; _aesBlock[8] = 0; _aesBlock[9] = 0; _aesBlock[10] = 0;
-	_aesBlock[11] = 0; _aesBlock[12] = 0; _aesBlock[13] = 0; _aesBlock[14] = 0;
-	_aesBlock[15] = 0;
+	_feistelBuf[38] = Number(v & 0xffn); v >>= 8n;
+	_feistelBuf[37] = Number(v & 0xffn); v >>= 8n;
+	_feistelBuf[36] = Number(v & 0xffn); v >>= 8n;
+	_feistelBuf[35] = Number(v & 0xffn); v >>= 8n;
+	_feistelBuf[34] = Number(v & 0xffn); v >>= 8n;
+	_feistelBuf[33] = Number(v & 0xffn);
 
-	const c = crypto.createCipheriv('aes-256-ecb', encKey, null);
-	c.setAutoPadding(false);
-	const out = c.update(_aesBlock);
+	const out = crypto.createHash('sha256').update(_feistelBuf).digest();
 
 	return (
 		(BigInt(out[0]) << 36n) |
@@ -131,28 +127,25 @@ function feistelDecrypt88(x: bigint, encKey: Buffer): bigint {
 	return ((L << HALF_BITS) | R) & ID_MASK;
 }
 
-// ---- MAC (AES-256-ECB) ----
-const _macBlock = Buffer.alloc(16);
+// ---- MAC (SHA-256) ----
+const _macBuf = Buffer.alloc(43); // macKey(32) + cipher88(11)
 
 function mac34(cipher88: bigint, macKey: Buffer): bigint {
+	macKey.copy(_macBuf, 0);
 	let v = cipher88 & ID_MASK;
-	_macBlock[10] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[9] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[8] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[7] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[6] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[5] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[4] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[3] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[2] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[1] = Number(v & 0xffn); v >>= 8n;
-	_macBlock[0] = Number(v & 0xffn);
-	_macBlock[11] = 0; _macBlock[12] = 0; _macBlock[13] = 0;
-	_macBlock[14] = 0; _macBlock[15] = 0;
+	_macBuf[42] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[41] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[40] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[39] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[38] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[37] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[36] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[35] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[34] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[33] = Number(v & 0xffn); v >>= 8n;
+	_macBuf[32] = Number(v & 0xffn);
 
-	const c = crypto.createCipheriv('aes-256-ecb', macKey, null);
-	c.setAutoPadding(false);
-	const out = c.update(_macBlock);
+	const out = crypto.createHash('sha256').update(_macBuf).digest();
 
 	return (
 		(BigInt(out[0]) << 26n) |
