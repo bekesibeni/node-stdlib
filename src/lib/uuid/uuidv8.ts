@@ -3,7 +3,11 @@ import crypto from 'crypto';
 const ID_BITS = 88n;
 const TAG_BITS = 34n;
 const TAG_MASK = (1n << TAG_BITS) - 1n;
-const MAX_INPUT_BYTES = 10; // 1 byte length prefix + 10 bytes data = 11 bytes = 88 bits
+
+const TYPE_BIT = 1n << 87n;
+const MAX_NUMERIC = TYPE_BIT - 1n;
+const MAX_NUMERIC_DIGITS = 26;
+const MAX_STRING_BYTES = 10;
 
 const HALF_BITS = 44n;
 const HALF_MASK = (1n << HALF_BITS) - 1n;
@@ -28,33 +32,46 @@ function deriveKeys(secret: string) {
 	return {encKey, macKey};
 }
 
-function stringToBigInt88(input: string): bigint {
+function inputToBigInt88(input: string): bigint {
 	if (typeof input !== 'string') throw new Error('Input must be a string');
-	const buf = Buffer.from(input, 'utf8');
-	if (buf.length === 0) throw new Error('Input must not be empty');
-	if (buf.length > MAX_INPUT_BYTES) {
-		throw new Error(`Input exceeds ${MAX_INPUT_BYTES}-byte limit (got ${buf.length} bytes)`);
+	if (input.length === 0) throw new Error('Input must not be empty');
+
+	// Numeric mode: all digits, up to 26 digits → stored as bigint with top bit 0
+	if (/^\d+$/.test(input)) {
+		if (input.length > MAX_NUMERIC_DIGITS) {
+			throw new Error(`Numeric input exceeds ${MAX_NUMERIC_DIGITS}-digit limit`);
+		}
+		const n = BigInt(input);
+		if (n > MAX_NUMERIC) {
+			throw new Error('Numeric input exceeds 87-bit limit');
+		}
+		return n;
 	}
-	const payload = Buffer.alloc(11);
-	payload[0] = buf.length;
-	buf.copy(payload, 1);
-	let n = 0n;
-	for (let i = 0; i < 11; i++) {
-		n = (n << 8n) | BigInt(payload[i]);
+
+	// String mode: top bit 1, next 7 bits = length, lower 80 bits = data
+	const buf = Buffer.from(input, 'utf8');
+	if (buf.length > MAX_STRING_BYTES) {
+		throw new Error(`Input exceeds ${MAX_STRING_BYTES}-byte limit (got ${buf.length} bytes)`);
+	}
+	let n = TYPE_BIT | (BigInt(buf.length) << 80n);
+	for (let i = 0; i < buf.length; i++) {
+		n |= BigInt(buf[i]) << BigInt((MAX_STRING_BYTES - 1 - i) * 8);
 	}
 	return n;
 }
 
-function bigInt88ToString(n: bigint): string {
-	const buf = Buffer.alloc(11);
-	let v = n;
-	for (let i = 10; i >= 0; i--) {
-		buf[i] = Number(v & 0xffn);
-		v >>= 8n;
+function bigInt88ToOutput(n: bigint): string {
+	if ((n & TYPE_BIT) === 0n) {
+		return n.toString(10);
 	}
-	const len = buf[0];
-	if (len > MAX_INPUT_BYTES) throw new Error('Invalid decoded data');
-	return buf.subarray(1, 1 + len).toString('utf8');
+
+	const len = Number((n >> 80n) & 0x7fn);
+	if (len > MAX_STRING_BYTES) throw new Error('Invalid decoded data');
+	const buf = Buffer.alloc(len);
+	for (let i = 0; i < len; i++) {
+		buf[i] = Number((n >> BigInt((MAX_STRING_BYTES - 1 - i) * 8)) & 0xffn);
+	}
+	return buf.toString('utf8');
 }
 
 function feistelF(encKey: Buffer, round: number, r44: bigint): bigint {
@@ -193,7 +210,7 @@ function uuidStringToBytes(uuid: string): Uint8Array {
 
 export function encodeToUuidV8(input: string, secret: string): string {
 	const {encKey, macKey} = deriveKeys(secret);
-	const id = stringToBigInt88(input);
+	const id = inputToBigInt88(input);
 
 	const cipher88 = feistelEncrypt88(id, encKey);
 	const tag34 = mac34(cipher88, macKey);
@@ -214,5 +231,5 @@ export function decodeFromUuidV8(uuid: string, secret: string): string {
 	if (tag34 !== expected) throw new Error('Invalid token');
 
 	const id = feistelDecrypt88(cipher88, encKey);
-	return bigInt88ToString(id);
+	return bigInt88ToOutput(id);
 }
